@@ -10,6 +10,8 @@ It is easy to do the following.
 - Complex image generation procedures, such as those involving controlnets or consecutive txt2img,img2img, can be saved and reused at a later date.  
   (ex. After generating txt2img once, use it as an input image and execute img2img 3 times with slightly different conditions, and execute this procedure 20 times, changing the character and style each time. )  
 
+<img src="img/gui_sample.png" width="1024">
+
 
 ## Installation(for windows)
 [Python 3.10](https://www.python.org/) and git client must be installed  
