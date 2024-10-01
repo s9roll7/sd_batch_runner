@@ -1,0 +1,14 @@
+{
+    "pony": {
+        "character_dir_path": "enter your character lora directory. (ex. YOUR_SD_ENV_PATH/models/Lora/pony/character",
+        "style_dir_path": "YOUR_SD_ENV_PATH/models/Lora/pony/style",
+        "pose_dir_path": "YOUR_SD_ENV_PATH/models/Lora/pony/pose",
+        "item_dir_path": "YOUR_SD_ENV_PATH/models/Lora/pony/item"
+    },
+    "sd15": {
+        "character_dir_path": "enter your character lora directory. (ex. YOUR_SD_ENV_PATH/models/Lora/sd15/character",
+        "style_dir_path": "YOUR_SD_ENV_PATH/models/Lora/sd15/style",
+        "pose_dir_path": "YOUR_SD_ENV_PATH/models/Lora/sd15/pose",
+        "item_dir_path": "YOUR_SD_ENV_PATH/models/Lora/sd15/item"
+    }
+}

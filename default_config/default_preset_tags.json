@@ -1,0 +1,32 @@
+{
+    "pony_quality": {
+        "prompt": "score_9, score_8_up, score_8, score_7_up",
+        "negative_prompt": "score_6, score_5, score_4, (watermark, deformed, blurry, censored, low quality, text, worst quality, extra hands)",
+        "is_footer": false
+    },
+    "booru_quality": {
+        "prompt": "masterpiece, best quality, ultra-detailed, very aesthetic, illustration, disheveled hair, perfect composition, moist skin, intricate details",
+        "negative_prompt": "longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, very displeasing",
+        "is_footer": false
+    },
+    "perfect_face": {
+        "prompt": "perfect face, perfect eyes",
+        "negative_prompt": "",
+        "is_footer": false
+    },
+    "anime_style": {
+        "prompt": "source_anime",
+        "negative_prompt": "3D, Photorealistic, Lifelike, Realistic, True to Life, Vivid, Picture-Perfect, Naturalistic, Convincing",
+        "is_footer": false
+    },
+    "photo_style": {
+        "prompt": "source_real, raw, photo,  very detailed, realistic, highly detailed, high detail, soft lighting, dramatic shadows, highly detailed, ((detailed skin)) ,depth of field, ((film grain))",
+        "negative_prompt": "",
+        "is_footer": false
+    },
+    "detail_up": {
+        "prompt": "<lora:add-detail-xl:2.0>",
+        "negative_prompt": "",
+        "is_footer": true
+    }
+}

@@ -1,0 +1,7 @@
+numpy
+pillow
+fire
+opencv-python
+webuiapi==0.9.15
+av
+flet==0.24.1
