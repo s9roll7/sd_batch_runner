@@ -1,0 +1,11 @@
+__pycache__
+/venv
+/tmp
+/input
+/output
+.vscode
+/lora_dir_env
+/config.json
+/controlnet.json
+/lora_dir.json
+/preset_tags.json
