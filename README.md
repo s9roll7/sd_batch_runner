@@ -16,10 +16,10 @@ It is easy to do the following.
 
 ```sh
 git clone https://github.com/s9roll7/sd_batch_runner.git
-cd ad_batch_runner
+cd sd_batch_runner
 py -3.10 -m venv venv
 venv\Scripts\activate.bat
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Preparation on the sdwebui side
