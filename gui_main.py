@@ -8,7 +8,7 @@ import flet as ft
 
 from sd_batch_runner.generate import get_controlnet_list,get_checkpoint_list,get_latent_upscale_mode_list,get_sampler_list,get_scheduler_list,get_sam_model_list,async_generate,cancel_generate
 from sd_batch_runner.lora import update_lora_command,LoraType, lora_clear_cache
-from sd_batch_runner.util import get_time_str
+from sd_batch_runner.util import get_time_str, get_image_file_list
 
 
 logger = logging.getLogger(__name__)
@@ -123,6 +123,228 @@ def str_to_bool(val):
 
 def str_to_token(val):
     return val.split(',')
+
+
+def create_picker_control(page, info_text, picker_type, on_pick_ok):
+    # "dir", "png", "mp4", "txt"
+    def on_click(e: ft.ControlEvent):
+        def on_pick(e: ft.FilePickerResultEvent):
+            if picker_type == "dir":
+                if e.path:
+                    on_pick_ok(Path(e.path).as_posix())
+            else:
+                if e.files:
+                    on_pick_ok(Path(e.files[0].path).as_posix())
+
+            page.overlay.remove(pick_files_dialog)
+            page.update()
+
+        pick_files_dialog = ft.FilePicker(on_result=on_pick)
+        page.overlay.append(pick_files_dialog)
+        page.update()
+        if picker_type == "dir":
+            pick_files_dialog.get_directory_path( f"Select Directory ({info_text})" )
+        else:
+            if picker_type == "png":
+                dialog_title=f"Select Png File ({info_text})"
+                allowed_extensions = ["png","PNG"]
+            elif picker_type == "mp4":
+                dialog_title=f"Select Mp4 File ({info_text})"
+                allowed_extensions = ["mp4","MP4"]
+            elif picker_type == "txt":
+                dialog_title=f"Select Text File ({info_text})"
+                allowed_extensions = ["txt","TXT"]
+            else:
+                raise ValueError(f"unknown picker type {picker_type}")
+
+            pick_files_dialog.pick_files(
+                dialog_title=dialog_title,
+                allow_multiple=False,
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions = allowed_extensions
+            )
+
+    btn = ft.IconButton(icon=ft.Icons.FOLDER, on_click=on_click)
+
+    return btn
+
+
+def open_file(filepath):
+    import os, sys, subprocess
+    if sys.platform == "win32":
+        os.startfile(filepath)
+    else:
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.call([opener, filepath])
+
+def read_text_as_list(filepath):
+    result = []
+    p = Path(filepath)
+    with p.open('r') as f :
+        while True:
+            line = f.readline()
+            if not line:
+                break
+            line = line.strip()
+            result.append(line)
+
+    return result
+
+def create_seq_json_from_tags(tag_list, tag_src_img_list, opt, debug):
+    from sd_batch_runner.util import config_clear_cache,config_get_default_generation_setting
+    config_clear_cache()
+    lora_clear_cache()
+
+    gen = config_get_default_generation_setting(True)
+
+    seq = {
+            "common" : {
+                "prompt":{
+                    "character_lora" : "",
+                    "character_lora2" : "",
+                    "style_lora" : "",
+                    "style_lora2" : "",
+                    "pose_lora" : "",
+                    "pose_lora2" : "",
+                    "item_lora" : "",
+                    "item_lora2" : "",
+                    "header" : "",
+                    "footer" : "",
+                },
+                "seed" : "@random_per_seq",
+                "generation_setting" : {
+                    "width" : gen["width"],
+                    "height" : gen["height"],
+                    "negative_prompt" : gen["negative_prompt"],
+                },
+            },
+            "seq" : [
+                {
+                    "type" : "txt2img"
+                }
+            ]
+        }
+
+    def create_seq():
+        new_seq = []
+        for tag, img_path in zip(tag_list,tag_src_img_list):
+
+            item = {
+                "type" : opt["type"],
+                "prompt" : {
+                    "footer" : tag
+                },
+                "output_scale" : opt["output_scale"],
+                "output_filename" : Path(img_path).with_suffix(".png").name
+            }
+
+
+            if opt["type"] == "img2img":
+                item["input_image"] = [ [img_path], "", 1.0 ]
+            
+            controlnet = []
+
+            for c in opt["controlnet"]:
+                #logger.info(c)
+                if c["enable"]:
+                    controlnet.append({
+                        "type" : c["type"],
+                        "image" : [ [img_path], "", 1.0 ],
+                        "cn_target" : "",
+                        "weight" : c["weight"],
+                        "guidance_start" : c["guidance_start"],
+                        "guidance_end" : c["guidance_end"]
+                    })
+
+            
+            if controlnet:
+                item["controlnet"] = controlnet
+            
+            from PIL import Image
+            img = Image.open(img_path)
+            w = (gen["width"] + gen["height"]) * img.size[0] / (img.size[0] + img.size[1])
+            h = (gen["width"] + gen["height"]) * img.size[1] / (img.size[0] + img.size[1])
+
+            item["generation_setting"] = {
+                "width" : int(w//8*8),
+                "height" : int(h//8*8),
+            }
+
+            if opt["type"] == "img2img":
+                item["generation_setting"]["denoising_strength"] = opt["denoising_strength"]
+
+            new_seq.append(item)
+
+        return new_seq
+        
+    def create_debug_seq():
+        new_seq = []
+
+        #d_tag_list = [tag_list[0], tag_list[len(tag_list)//2]]
+        #d_tag_src_img_list = [tag_src_img_list[0], tag_src_img_list[len(tag_list)//2]]
+        d_tag_list = [tag_list[0]]
+        d_tag_src_img_list = [tag_src_img_list[0]]
+
+        count = 0
+
+        for tag, img_path in zip(d_tag_list, d_tag_src_img_list):
+            item = {
+                "type" : "txt2img",
+                "prompt" : {
+                    "footer" : tag
+                },
+                "output_scale" : opt["output_scale"],
+                "input_image" : [ [img_path], "", 1.0 ],
+            }
+
+            from PIL import Image
+            img = Image.open(img_path)
+            w = (gen["width"] + gen["height"]) * img.size[0] / (img.size[0] + img.size[1])
+            h = (gen["width"] + gen["height"]) * img.size[1] / (img.size[0] + img.size[1])
+
+            item["generation_setting"] = {
+                "width" : int(w//8*8),
+                "height" : int(h//8*8),
+            }
+
+            item["generation_setting"]["denoising_strength"] = opt["denoising_strength"]
+
+            for main_type in ["txt2img","img2img"]:
+                item["type"] = main_type
+
+                for c_type in ["depth","tile","line"]:
+                    for w,s,e in [(0.25,0,0.5),(0.5,0,0.5),(1.0,0,0.5),(0.25,0,0.75),(0.5,0,0.75),(1.0,0,0.75),(0.25,0,1.0),(0.5,0,1.0),(1.0,0,1.0)]:
+                        item["controlnet"] = [
+                            {
+                                    "type" : c_type,
+                                    "image" : [ [img_path], "", 1.0 ],
+                                    "cn_target" : "",
+                                    "weight" : w,
+                                    "guidance_start" : s,
+                                    "guidance_end" : e
+                            }
+                        ]
+
+                        if main_type == "txt2img":
+                            item["output_filename"] = f"{str(count).zfill(5)}_{main_type}_{c_type}_{str(int(w*100)).zfill(3)}_{str(int(s*100)).zfill(3)}_{str(int(e*100)).zfill(3)}.png"
+                        else:
+                            item["output_filename"] = f"{str(count).zfill(5)}_{main_type}{str(int(opt['denoising_strength']*100)).zfill(3)}_{c_type}_{str(int(w*100)).zfill(3)}_{str(int(s*100)).zfill(3)}_{str(int(e*100)).zfill(3)}.png"
+                        
+                        new_seq.append(item.copy())
+
+                        count += 1
+
+
+        return new_seq
+
+    
+    if debug:
+        seq["seq"] = create_debug_seq()
+    else:
+        seq["seq"] = create_seq()
+
+    return json.dumps(seq, indent=4, ensure_ascii=False)
+
 
 class ConfigType(str, Enum):
     Controlnet_Module = "controlnet_module",
@@ -295,6 +517,7 @@ class ConfigType(str, Enum):
     Input_Seq_Type = "input_seq_type",
     Input_Seq_InputImage = "input_seq_input_image",
     Input_Seq_OutputScale = "input_seq_output_scale",
+    Input_Seq_OutputFileName = "input_seq_output_filename",
 
     Input_Seq_ControlnetType = "input_seq_controlnet_type",
     Input_Seq_ControlnetImage = "input_seq_controlnet_image",
@@ -519,6 +742,7 @@ CONFIG_MAP = {
     ConfigType.Input_Seq_Type : ["dd", str, "type"],
     ConfigType.Input_Seq_InputImage : ["image", str, "input_image"],
     ConfigType.Input_Seq_OutputScale : ["num", float, "output_scale"],
+    ConfigType.Input_Seq_OutputFileName : ["str", str, "output_filename"],
     ConfigType.Input_Seq_ControlnetType : ["dd", str, "type"],
     ConfigType.Input_Seq_ControlnetImage : ["image", str, "image"],
     ConfigType.Input_Seq_ControlnetCNTarget : ["cn_target", str, "cn_target"],
@@ -534,44 +758,10 @@ class ConfigItem:
         self.options = options
         self.format_func = format_func
         self.page : ft.Page = page
-    
+
     def _create_picker_control(self, picker_type, on_pick_ok):
-        # "dir", "png", "mp4"
-        def on_click(e: ft.ControlEvent):
-            def on_pick(e: ft.FilePickerResultEvent):
-                if picker_type == "dir":
-                    if e.path:
-                        on_pick_ok(Path(e.path).as_posix())
-                else:
-                    if e.files:
-                        on_pick_ok(Path(e.files[0].path).as_posix())
-
-                self.page.overlay.remove(pick_files_dialog)
-                self.page.update()
-
-            pick_files_dialog = ft.FilePicker(on_result=on_pick)
-            self.page.overlay.append(pick_files_dialog)
-            self.page.update()
-            if picker_type == "dir":
-                pick_files_dialog.get_directory_path( f"Select Directory ({self.name})" )
-            elif picker_type == "png":
-                pick_files_dialog.pick_files(
-                    dialog_title=f"Select Png File ({self.name})",
-                    allow_multiple=False,
-                    file_type=ft.FilePickerFileType.CUSTOM,
-                    allowed_extensions = ["png","PNG"]
-                )
-            elif picker_type == "mp4":
-                pick_files_dialog.pick_files(
-                    dialog_title=f"Select Mp4 File ({self.name})",
-                    allow_multiple=False,
-                    file_type=ft.FilePickerFileType.CUSTOM,
-                    allowed_extensions = ["mp4","MP4"]
-                )
-
-        btn = ft.IconButton(icon=ft.icons.FOLDER, on_click=on_click)
-
-        return btn
+        return create_picker_control(self.page, self.name, picker_type, on_pick_ok)
+    
     
     def _create_dir_control(self):
 
@@ -741,10 +931,10 @@ class ConfigItem:
                 controls.append( ft.ElevatedButton(text=lora, width=200, on_click=on_click_func, data=lora) )
                 return ft.Column( controls, alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER )
             
-            for lora, thumb in lora_list:
-                lora_controls.append( ft.Container(create_item(lora, thumb), border=ft.border.all(5, ft.colors.BLACK45) ) )
+            for lora, _, thumb in lora_list:
+                lora_controls.append( ft.Container(create_item(lora, thumb), border=ft.border.all(5, ft.Colors.BLACK45) ) )
 
-            return lora_controls, [l[0] for l in lora_list]
+            return lora_controls, [l[0] for l in lora_list], [l[1] for l in lora_list]
 
         def _get_lora_list(lora_type:LoraType):
             from sd_batch_runner.lora import get_lora_files_and_preview_paths
@@ -760,7 +950,7 @@ class ConfigItem:
                 return ft.Column( controls, alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER )
             
             for lora, thumb in lora_list:
-                lora_controls.append( ft.Container(create_item(lora, thumb), border=ft.border.all(5, ft.colors.BLACK45) ) )
+                lora_controls.append( ft.Container(create_item(lora, thumb), border=ft.border.all(5, ft.Colors.BLACK45) ) )
 
             return lora_controls, [l[0] for l in lora_list]
 
@@ -768,10 +958,13 @@ class ConfigItem:
             title=ft.Text(f"Select {self.name}"),
         )
 
-        lora_list, lora_name_list = get_lora_list( conf2type[self.name] )
+        lora_list, lora_name_list, lora_date_list = get_lora_list( conf2type[self.name] )
         lora_dict = {}
+        lora_date_dict = {}
         for lc, ln in zip(lora_list, lora_name_list):
             lora_dict[ln] = lc
+        for ld, ln in zip(lora_date_list, lora_name_list):
+            lora_date_dict[ln] = ld
 
         visible_lora_name_list = lora_name_list.copy()
 
@@ -790,6 +983,14 @@ class ConfigItem:
                     result += [name for name in lora_name_list if name.lower().find(f) != -1]
 
                 visible_lora_name_list = list(dict.fromkeys(result))
+            
+            if sort_type_radio.value == "name":
+                visible_lora_name_list = sorted(visible_lora_name_list, reverse= sort_order_radio.value == "descending")
+            else:
+                # date
+                name_date_list = [ (n, lora_date_dict[n]) for n in visible_lora_name_list]
+                name_date_list.sort(key=lambda x: x[1], reverse= sort_order_radio.value == "descending")
+                visible_lora_name_list = [ n[0] for n in name_date_list]
 
 
             lora_col.controls = show_lora_list()
@@ -797,6 +998,14 @@ class ConfigItem:
 
 
         filter_text = ft.TextField("", label="filter", on_change=on_filter_change)
+        sort_type_radio = ft.RadioGroup(value="name", content=ft.Row([
+            ft.Radio(value="name", label="name"),
+            ft.Radio(value="date", label="date"),]), on_change=on_filter_change)
+        sort_order_radio = ft.RadioGroup(value="ascending", content=ft.Row([
+            ft.Radio(value="ascending", label="ascending"),
+            ft.Radio(value="descending", label="descending"),]), on_change=on_filter_change)
+        radio_row = ft.Row( controls=[sort_type_radio, sort_order_radio], spacing=100)
+
 
         def show_lora_list():
             lora_controls = []
@@ -826,7 +1035,7 @@ class ConfigItem:
         )
 
         col = ft.Column(
-            controls=[filter_text, lora_col],
+            controls=[filter_text, radio_row, lora_col],
             expand=True
         )
 
@@ -902,7 +1111,7 @@ class ConfigItem:
                     self.page.update()
 
 
-                btn = ft.IconButton(icon=ft.icons.FOLDER_OPEN, width=50, on_click=on_icon_click)
+                btn = ft.IconButton(icon=ft.Icons.FOLDER_OPEN, width=50, on_click=on_icon_click)
                 controls.append(btn)
 
                 def on_change_single(e: ft.ControlEvent):
@@ -1018,12 +1227,12 @@ class ConfigItem:
         def create_controls():
             controls=[]
             for preset in self.val:
-                chip = ft.Chip(ft.Text(preset), leading=ft.Icon(ft.icons.DELETE), on_click=on_click, col=3)
+                chip = ft.Chip(ft.Text(preset), leading=ft.Icon(ft.Icons.DELETE), on_click=on_click, col=3)
                 controls.append(chip)
             tags_row = ft.ResponsiveRow(controls=controls,alignment= ft.MainAxisAlignment.START, expand=True)
             tags = ft.Container(
                 content=tags_row,
-                bgcolor=ft.colors.BLACK12,
+                bgcolor=ft.Colors.BLACK12,
                 expand=True,
                 margin=5,
                 padding=10,
@@ -1218,7 +1427,7 @@ class ViewCreator():
     def show_item(self, key):
 
         exp = ft.ExpansionPanel(
-            bgcolor=ft.colors.GREEN_50,
+            bgcolor=ft.Colors.GREEN_50,
             can_tap_header=True,
             header=ft.ListTile(title=ft.Text(f"{key}")),
             data=key
@@ -1273,7 +1482,7 @@ class ViewCreator():
             self.warn_save()
 
         return ft.Row( controls=[
-            ft.IconButton(icon=ft.icons.SAVE, width=200, on_click=warn_save),
+            ft.IconButton(icon=ft.Icons.SAVE, width=200, on_click=warn_save),
             ft.Text( self.json_path.absolute() ),
         ] )
 
@@ -1283,17 +1492,17 @@ class ViewCreator():
 
         view = ft.View(self.route, [
             ft.AppBar(
-                leading=ft.IconButton(icon=ft.icons.ARROW_BACK, width=200, on_click=back_to_top),
+                leading=ft.IconButton(icon=ft.Icons.ARROW_BACK, width=200, on_click=back_to_top),
                 title=ft.Text(self.title),
-                bgcolor=ft.colors.BLUE),
+                bgcolor=ft.Colors.BLUE),
         ])
 
         self.load_config()
 
         self.panel = ft.ExpansionPanelList(
-            expand_icon_color=ft.colors.BLACK,
+            expand_icon_color=ft.Colors.BLACK,
             elevation=8,
-            divider_color=ft.colors.BLACK,
+            divider_color=ft.Colors.BLACK,
             controls=[
             ],
         )
@@ -1312,7 +1521,7 @@ class ViewCreator():
 
         view.controls.append( ft.Container(
             content=self.create_tail_icon(),
-            bgcolor=ft.colors.BLUE_50
+            bgcolor=ft.Colors.BLUE_50
         ))
 
         return view
@@ -1350,7 +1559,7 @@ class TabViewCreator(ViewCreator):
                     tight=True
                 ),
                 padding=10,
-                bgcolor= ft.colors.GREEN_50,
+                bgcolor= ft.Colors.GREEN_50,
             )
             ,
             visible=True,
@@ -1372,9 +1581,9 @@ class TabViewCreator(ViewCreator):
 
         view = ft.View(self.route, [
             ft.AppBar(
-                leading=ft.IconButton(icon=ft.icons.ARROW_BACK, width=200, on_click=back_to_top),
+                leading=ft.IconButton(icon=ft.Icons.ARROW_BACK, width=200, on_click=back_to_top),
                 title=ft.Text(self.title),
-                bgcolor=ft.colors.BLUE),
+                bgcolor=ft.Colors.BLUE),
         ])
 
         self.load_config()
@@ -1383,8 +1592,8 @@ class TabViewCreator(ViewCreator):
             selected_index=0,
             animation_duration=300,
             expand=True,
-            divider_color=ft.colors.BLACK,
-            indicator_color=ft.colors.BLACK,
+            divider_color=ft.Colors.BLACK,
+            indicator_color=ft.Colors.BLACK,
         )
 
         self.show_tabs()
@@ -1393,7 +1602,7 @@ class TabViewCreator(ViewCreator):
 
         view.controls.append( ft.Container(
             content=self.create_tail_icon(),
-            bgcolor=ft.colors.BLUE_50
+            bgcolor=ft.Colors.BLUE_50
         ))
 
         return view
@@ -1439,10 +1648,10 @@ class ControlnetViewCreator(ViewCreator):
                 self.panel.controls.remove(e.control.data)
                 self.config_items.pop(name)
                 self.page.update()
-            return ft.IconButton(icon=ft.icons.DELETE, width=200, on_click=handle_delete, data=exp)
+            return ft.IconButton(icon=ft.Icons.DELETE, width=200, on_click=handle_delete, data=exp)
 
         exp = ft.ExpansionPanel(
-            bgcolor=ft.colors.GREEN_50,
+            bgcolor=ft.Colors.GREEN_50,
             can_tap_header=True,
             header=ft.ListTile(title=ft.Text(f"{key}")),
             data=key
@@ -1526,8 +1735,8 @@ class ControlnetViewCreator(ViewCreator):
             self.warn_save()
 
         return ft.Row( controls=[
-            ft.IconButton(icon=ft.icons.ADD, width=200, on_click=append_item),
-            ft.IconButton(icon=ft.icons.SAVE, width=200, on_click=warn_save),
+            ft.IconButton(icon=ft.Icons.ADD, width=200, on_click=append_item),
+            ft.IconButton(icon=ft.Icons.SAVE, width=200, on_click=warn_save),
             ft.Text( self.json_path.absolute() ),
         ] )
 
@@ -1589,8 +1798,8 @@ class LoraEnvViewCreator(ViewCreator):
             self.warn_save()
 
         return ft.Row( controls=[
-            ft.IconButton(icon=ft.icons.ADD, width=200, on_click=append_item),
-            ft.IconButton(icon=ft.icons.SAVE, width=200, on_click=warn_save),
+            ft.IconButton(icon=ft.Icons.ADD, width=200, on_click=append_item),
+            ft.IconButton(icon=ft.Icons.SAVE, width=200, on_click=warn_save),
             ft.Text( self.json_path.absolute() ),
         ] )
 
@@ -1602,10 +1811,10 @@ class LoraEnvViewCreator(ViewCreator):
                 self.panel.controls.remove(e.control.data)
                 self.config_items.pop(name)
                 self.page.update()
-            return ft.IconButton(icon=ft.icons.DELETE, width=200, on_click=handle_delete, data=exp)
+            return ft.IconButton(icon=ft.Icons.DELETE, width=200, on_click=handle_delete, data=exp)
 
         exp = ft.ExpansionPanel(
-            bgcolor=ft.colors.GREEN_50,
+            bgcolor=ft.Colors.GREEN_50,
             can_tap_header=True,
             header=ft.ListTile(title=ft.Text(f"{key}")),
             data=key,
@@ -1634,6 +1843,7 @@ class LoraEnvViewCreator(ViewCreator):
         )
 
         self.panel.controls.append(exp)
+
 
 
 class PresetTagsViewCreator(LoraEnvViewCreator):
@@ -2020,6 +2230,7 @@ class GenerateEditViewCreator(TabViewCreator):
             ConfigType.Input_Seq_Type,
             ConfigType.Input_Seq_InputImage,
             ConfigType.Input_Seq_OutputScale,
+            ConfigType.Input_Seq_OutputFileName,
         ]
 
         self.config_list["controlnet"] = [
@@ -2033,6 +2244,8 @@ class GenerateEditViewCreator(TabViewCreator):
 
         self.config_list["seq_generation_setting"] = [
             ConfigType.GenImg2Img_DenoisingStr,
+            ConfigType.CommonGen_Width,
+            ConfigType.CommonGen_Height,
         ]
 
         self.updated = False
@@ -2198,6 +2411,7 @@ class GenerateEditViewCreator(TabViewCreator):
             "type" : "txt2img",
             "input_image" : "",
             "output_scale" : 1.0,
+            "output_filename" : "",
         }
     
         if c:
@@ -2270,6 +2484,8 @@ class GenerateEditViewCreator(TabViewCreator):
 
         default_value = {
             "denoising_strength" : def_conf_gen["denoising_strength"],
+            "width" : def_conf_gen["width"],
+            "height" : def_conf_gen["height"],
         }
     
         if c:
@@ -2513,7 +2729,7 @@ class GenerateEditViewCreator(TabViewCreator):
     def create_inner_panel(self, c, key_list):
 
         exp = ft.ExpansionPanel(
-            bgcolor=ft.colors.GREEN_50,
+            bgcolor=ft.Colors.GREEN_50,
             can_tap_header=True,
             header=ft.ListTile(title=ft.Text(key_list[-1])),
             data=(key_list)
@@ -2551,16 +2767,16 @@ class GenerateEditViewCreator(TabViewCreator):
     
     def create_nested_panel(self, c, key_list):
         exp = ft.ExpansionPanel(
-            bgcolor=ft.colors.GREEN_100,
+            bgcolor=ft.Colors.GREEN_100,
             can_tap_header=True,
             header=ft.ListTile(title=ft.Text(key_list[-1])),
             data=(key_list)
         )
 
         nested_panel_list = ft.ExpansionPanelList(
-            expand_icon_color=ft.colors.BLACK,
+            expand_icon_color=ft.Colors.BLACK,
             elevation=8,
-            divider_color=ft.colors.BLACK,
+            divider_color=ft.Colors.BLACK,
             controls=[
             ],
             data=(key_list)
@@ -2617,9 +2833,9 @@ class GenerateEditViewCreator(TabViewCreator):
         )
 
         nested_panel_list = ft.ExpansionPanelList(
-            expand_icon_color=ft.colors.BLACK,
+            expand_icon_color=ft.Colors.BLACK,
             elevation=8,
-            divider_color=ft.colors.BLACK,
+            divider_color=ft.Colors.BLACK,
             controls=[
             ],
             data=(key_list)
@@ -2678,14 +2894,14 @@ class GenerateEditViewCreator(TabViewCreator):
             append_item = append_item_seq_tab
 
             return ft.Tab( tab_content=
-                ft.IconButton(icon=ft.icons.ADD, on_click=append_item),
+                ft.IconButton(icon=ft.Icons.ADD, on_click=append_item),
             )
 
         elif key_list[-1] == "controlnet":
             append_item = append_item_controlnet
 
             return ft.Row( controls=[
-                ft.IconButton(icon=ft.icons.ADD, width=200, on_click=append_item),
+                ft.IconButton(icon=ft.Icons.ADD, width=200, on_click=append_item),
             ] )
     
     def create_tab_tail_add_option(self, panel_list:ft.ExpansionPanelList, key_list):
@@ -2727,7 +2943,7 @@ class GenerateEditViewCreator(TabViewCreator):
         dd = ft.Dropdown(opt_label[0], width=300, options=opt)
 
         return ft.Row( controls=[
-            ft.IconButton(icon=ft.icons.ADD, width=100, on_click=append_item),
+            ft.IconButton(icon=ft.Icons.ADD, width=100, on_click=append_item),
             dd
         ] )
 
@@ -2769,7 +2985,7 @@ class GenerateEditViewCreator(TabViewCreator):
             delete_item = delete_item_common
 
         return ft.Row( controls=[
-            ft.IconButton(icon=ft.icons.DELETE, width=200, on_click=delete_item),
+            ft.IconButton(icon=ft.Icons.DELETE, width=200, on_click=delete_item),
         ] )
 
     def show_tab(self, key):
@@ -2783,9 +2999,9 @@ class GenerateEditViewCreator(TabViewCreator):
 
         if key == "common":
             panel_list = ft.ExpansionPanelList(
-                expand_icon_color=ft.colors.BLACK,
+                expand_icon_color=ft.Colors.BLACK,
                 elevation=8,
-                divider_color=ft.colors.BLACK,
+                divider_color=ft.Colors.BLACK,
                 controls=[
                 ],
                 data=(key)
@@ -2806,8 +3022,8 @@ class GenerateEditViewCreator(TabViewCreator):
                 selected_index=0,
                 animation_duration=300,
                 expand=True,
-                divider_color=ft.colors.BLACK,
-                indicator_color=ft.colors.BLACK,
+                divider_color=ft.Colors.BLACK,
+                indicator_color=ft.Colors.BLACK,
                 data=(key)
             )
 
@@ -2854,7 +3070,7 @@ class GenerateEditViewCreator(TabViewCreator):
                             ft.FilledButton(text="Generate", width=200, on_click=on_generate_start),
                             batch_counter,
                             ft.VerticalDivider(width=100, thickness=30),
-                            ft.IconButton(icon=ft.icons.SAVE, width=50, on_click=warn_save),
+                            ft.IconButton(icon=ft.Icons.SAVE, width=50, on_click=warn_save),
                             ft.Text( self.json_path.absolute() )
                         ]
                     ),
@@ -2952,9 +3168,9 @@ def create_generate_view(page: ft.Page):
 
     view = ft.View("/view_generate", [
         ft.AppBar(
-            leading=ft.IconButton(icon=ft.icons.ARROW_BACK, width=200, on_click=lambda _: page.go("/view_top")),
+            leading=ft.IconButton(icon=ft.Icons.ARROW_BACK, width=200, on_click=lambda _: page.go("/view_top")),
             title=ft.Text("Generate"),
-            bgcolor=ft.colors.BLUE),
+            bgcolor=ft.Colors.BLUE),
         ft.FilledButton(text = "Create New Sequence", width=300, on_click=create_new),
         ft.FilledButton(text = "Load Sequence", width=300, on_click=load),
         ft.Row([
@@ -3025,9 +3241,9 @@ def create_generate_progress_view(page: ft.Page):
 
     view = ft.View("/view_generate_progress", [
             ft.AppBar(
-                leading=ft.IconButton(icon=ft.icons.ARROW_BACK, width=200, on_click=warn_cancel),
+                leading=ft.IconButton(icon=ft.Icons.ARROW_BACK, width=200, on_click=warn_cancel),
                 title=ft.Text("Generating..."),
-                bgcolor=ft.colors.BLUE),
+                bgcolor=ft.Colors.BLUE),
             ft.Row([status_txt,progress_txt], alignment=ft.MainAxisAlignment.CENTER),
             progress,
             ft.Divider(height=100, thickness=0, opacity=0.0),
@@ -3070,6 +3286,340 @@ def create_generate_progress_view(page: ft.Page):
     return view
 
 
+
+def create_create_seq_view(page: ft.Page):
+
+    from sd_batch_runner.util import config_clear_cache,config_get_default_generation_setting
+    config_clear_cache()
+    lora_clear_cache()
+
+
+    def filter_token_list(raw_tags_list, remove_pattern):
+        import re
+
+        def is_match(token, pattern):
+            return re.fullmatch(pattern, token)
+        
+        result = []
+        repatter = re.compile(remove_pattern)
+
+        logger.warning(raw_tags_list)
+
+        for raw in raw_tags_list:
+            logger.warning(raw)
+            token_list = raw.split(",")
+            token_list = [t.strip() for t in token_list]
+            token_list = [t for t in token_list if not is_match(t, repatter)]
+            result.append( ", ".join(token_list) )
+            logger.warning(", ".join(token_list))
+
+        return result
+    
+
+    def create_tagging_contents():
+        tagging_col = ft.Column(
+                        horizontal_alignment= ft.CrossAxisAlignment.START,
+                        tight=True
+                    )
+        cont1 = ft.Container(
+            content=tagging_col,
+            bgcolor=ft.Colors.GREEN_100,
+            alignment=ft.alignment.center_left,
+            expand=True,
+            padding=10
+        )
+        tagging_col.controls.append(ft.Text("==  Tagging Images  =="))
+        tagging_col.controls.append(ft.Text("[In] : image directory"))
+        tag_input_row = ft.Row()
+        tagging_col.controls.append(tag_input_row)
+
+        img_dir_text = ft.Text("--")
+        tag_path_text = ft.Text("--")
+
+        def on_pick_img_dir(v):
+            img_dir_text.value = v
+        
+        tag_input_row.controls.append( create_picker_control(page, "Image Directory", "dir", on_pick_img_dir) )
+        tag_input_row.controls.append(img_dir_text)
+
+        def on_click_exe_tagging(v):
+            from sd_batch_runner.tagger import get_labels
+            img_dir_path = Path(img_dir_text.value)
+            if img_dir_path.is_dir():
+                tags = get_labels(
+                            frame_dir=str(img_dir_path),
+                            general_threshold=0.35,
+                            character_threshold=0.85,
+                            with_confidence=False,
+                            is_danbooru_format=True,
+                            )
+                tags = tags.values()
+                out_path = img_dir_path / Path( get_time_str() + "_tags" +".txt" )
+                filtered_text = "\n".join(tags)
+                out_path.write_text( filtered_text , encoding="utf-8")
+                tag_path_text.value = str(out_path)
+                page.update()
+
+
+
+        tagging_col.controls.append(ft.FilledButton(text = "Execute Tagging", width=200, on_click=on_click_exe_tagging))
+
+        tagging_col.controls.append(ft.Text("[Out] : Tag Text File"))
+        tagging_col.controls.append(tag_path_text)
+
+        return cont1
+
+    def create_filter_contents():
+        filter_col = ft.Column(
+                        horizontal_alignment= ft.CrossAxisAlignment.START,
+                        tight=True
+                    )
+        cont2 = ft.Container(
+            content=filter_col,
+            bgcolor=ft.Colors.RED_100,
+            alignment=ft.alignment.center_left,
+            expand=True,
+            padding=10
+        )
+        filter_col.controls.append(ft.Text("==  Filter Tags  =="))
+        filter_col.controls.append(ft.Text("[In] : Tag Text File, Remove Token Pattern"))
+
+        filter_input_row = ft.Row()
+        filter_col.controls.append(filter_input_row)
+
+        filter_input_text = ft.Text("--")
+        filter_output_text = ft.Text("--")
+
+        def on_pick_filter_input(v):
+            nonlocal filter_raw_sample_list
+            filter_input_text.value = v
+            filter_raw_sample_list = read_text_as_list(v)[:5]
+            filter_sample_field.value = "\n".join(filter_raw_sample_list)
+        
+        filter_input_row.controls.append( create_picker_control(page, "Tag Text File", "txt", on_pick_filter_input) )
+        filter_input_row.controls.append(filter_input_text)
+
+        #Open with a text editor
+        def on_click_open_text(v):
+            open_path = Path(v.control.data.value)
+            if open_path.is_file():
+                open_file(open_path.as_posix())
+
+        filter_input_row.controls.append(ft.FilledButton(text = "Open with a text editor", width=200, on_click=on_click_open_text, data=filter_input_text))
+        filter_raw_sample_list = []
+
+        # remove token pattern
+        def on_change_pattern(e: ft.ControlEvent):
+            new_pattern = e.control.value
+            filter_sample_field.value = "\n".join(filter_token_list(filter_raw_sample_list, new_pattern))
+            page.update()
+        
+        filter_pattern_field = ft.TextField("", label="Remove Token Pattern (Regex)", expand=True, on_change=on_change_pattern)
+
+        filter_col.controls.append( filter_pattern_field )
+
+        filter_sample_field = ft.TextField("", label="Filtered Sample", expand=True, dense=True, read_only=True, text_size=12, multiline=True, min_lines=5)
+        filter_col.controls.append( filter_sample_field )
+
+
+        def on_click_filter_save(v):
+            input_path = Path(filter_input_text.value)
+            if input_path.is_file():
+                out_path = input_path.parent / Path( get_time_str() + "_tags" +".txt" )
+                filtered_text = "\n".join(filter_token_list(read_text_as_list( str(input_path) ), filter_pattern_field.value))
+                out_path.write_text( filtered_text , encoding="utf-8")
+                filter_output_text.value = str(out_path)
+                page.update()
+
+        filter_col.controls.append(ft.FilledButton(text = "Save", width=200, on_click=on_click_filter_save))
+
+        filter_col.controls.append(ft.Text("[Out] : Filtred Tag Text File"))
+
+        filter_output_row = ft.Row()
+        filter_col.controls.append(filter_output_row)
+
+        filter_output_row.controls.append(filter_output_text)
+
+        #Open with a text editor
+        filter_output_row.controls.append(ft.FilledButton(text = "Open with a text editor", width=200, on_click=on_click_open_text, data=filter_output_text))
+
+        return cont2
+
+    
+    def create_convert_contents():
+        from sd_batch_runner.util import get_controlnet_setting
+
+        convert_col = ft.Column(
+                        horizontal_alignment= ft.CrossAxisAlignment.START,
+                        tight=True
+                    )
+        cont3 = ft.Container(
+            content=convert_col,
+            bgcolor=ft.Colors.AMBER_100,
+            alignment=ft.alignment.center_left,
+            expand=True,
+            padding=10
+        )
+    
+        convert_col.controls.append(ft.Text("==  Convert Tags to Sequence file  =="))
+        convert_col.controls.append(ft.Text("[In] : Tag Text File"))
+
+        conv_input_row = ft.Row()
+        convert_col.controls.append(conv_input_row)
+
+        conv_input_text = ft.Text("--")
+        conv_output_json = ft.Text("--")
+
+        def on_pick_conv_input(v):
+            conv_input_text.value = v
+        
+        conv_input_row.controls.append( create_picker_control(page, "Tag Text File", "txt", on_pick_conv_input) )
+        conv_input_row.controls.append(conv_input_text)
+
+        ### adv
+        adv_tile = ft.ExpansionTile(
+            title=ft.Text("Advanced Settting"),
+            affinity=ft.TileAffinity.LEADING,
+            shape= ft.RoundedRectangleBorder(radius=5),
+            controls_padding=10,
+            tile_padding=10,
+            controls=[],
+        )
+        convert_col.controls.append(adv_tile)
+
+        txt2img_or_img2img_radio = ft.RadioGroup(value="txt2img", content=ft.Row([
+                                ft.Radio(value="txt2img", label="txt2img"),
+                                ft.Radio(value="img2img", label="img2img"),]))
+        
+        adv_tile.controls.append(txt2img_or_img2img_radio)
+        adv_tile.controls.append(ft.Divider())
+
+        denoising_str_txt = ft.TextField(0.75, label="denoising_strength for img2img", dense=True, input_filter=ft.InputFilter(regex_string=r"^-?(\d+(\.\d*)?|\.\d+)$", allow=True), text_size=15)
+        adv_tile.controls.append(denoising_str_txt)
+        adv_tile.controls.append(ft.Divider())
+
+        output_scale_txt = ft.TextField(1.0, label="output_scale", dense=True, input_filter=ft.InputFilter(regex_string=r"^-?(\d+(\.\d*)?|\.\d+)$", allow=True), text_size=15)
+        adv_tile.controls.append(output_scale_txt)
+        adv_tile.controls.append(ft.Divider())
+
+
+        def controlnet_type_changed(v):
+            cur_type = v.control.value
+            def_conf = get_controlnet_setting(cur_type)
+            v.control.data[0].value = def_conf["weight"]
+            v.control.data[1].value = def_conf["guidance_start"]
+            v.control.data[2].value = def_conf["guidance_end"]
+            page.update()
+
+        controlnet_type_list = get_controlnet_type_list()
+        controlnet_type_opt = [ft.dropdown.Option(o) for o in controlnet_type_list]
+        def_conf = get_controlnet_setting(controlnet_type_list[0])
+
+        controlnet1_enable_chk = ft.Checkbox(label="controlnet1_enable", value=False)
+        controlnet1_row = ft.Row()
+
+        controlnet1_type_dd = ft.Dropdown(controlnet_type_list[0], label="controlnet1_type", dense=True, options=controlnet_type_opt, on_change=controlnet_type_changed, options_fill_horizontally=True, text_size=15)
+
+        controlnet1_weight_txt = ft.TextField(def_conf["weight"], label="controlnet1_weight", dense=True, input_filter=ft.InputFilter(regex_string=r"^-?(\d+(\.\d*)?|\.\d+)$", allow=True), text_size=15)
+        controlnet1_g_start_txt = ft.TextField(def_conf["guidance_start"], label="controlnet1_guidance_start", dense=True, input_filter=ft.InputFilter(regex_string=r"^-?(\d+(\.\d*)?|\.\d+)$", allow=True), text_size=15)
+        controlnet1_g_end_txt = ft.TextField(def_conf["guidance_end"], label="controlnet1_guidance_end", dense=True, input_filter=ft.InputFilter(regex_string=r"^-?(\d+(\.\d*)?|\.\d+)$", allow=True), text_size=15)
+
+        controlnet1_type_dd.data = [controlnet1_weight_txt, controlnet1_g_start_txt, controlnet1_g_end_txt]
+        controlnet1_row.controls = [ controlnet1_type_dd, controlnet1_weight_txt, controlnet1_g_start_txt, controlnet1_g_end_txt ]
+
+        adv_tile.controls.append(controlnet1_enable_chk)
+        adv_tile.controls.append(controlnet1_row)
+             
+        adv_tile.controls.append(ft.Divider())
+
+        controlnet2_enable_chk = ft.Checkbox(label="controlnet2_enable", value=False)
+        controlnet2_row = ft.Row()
+
+        controlnet2_type_dd = ft.Dropdown(controlnet_type_list[0], label="controlnet2_type", dense=True, options=controlnet_type_opt, on_change=controlnet_type_changed, options_fill_horizontally=True, text_size=15)
+
+        controlnet2_weight_txt = ft.TextField(def_conf["weight"], label="controlnet2_weight", dense=True, input_filter=ft.InputFilter(regex_string=r"^-?(\d+(\.\d*)?|\.\d+)$", allow=True), text_size=15)
+        controlnet2_g_start_txt = ft.TextField(def_conf["guidance_start"], label="controlnet2_guidance_start", dense=True, input_filter=ft.InputFilter(regex_string=r"^-?(\d+(\.\d*)?|\.\d+)$", allow=True), text_size=15)
+        controlnet2_g_end_txt = ft.TextField(def_conf["guidance_end"], label="controlnet2_guidance_end", dense=True, input_filter=ft.InputFilter(regex_string=r"^-?(\d+(\.\d*)?|\.\d+)$", allow=True), text_size=15)
+
+        controlnet2_type_dd.data = [controlnet2_weight_txt, controlnet2_g_start_txt, controlnet2_g_end_txt]
+        controlnet2_row.controls = [ controlnet2_type_dd, controlnet2_weight_txt, controlnet2_g_start_txt, controlnet2_g_end_txt ]
+
+        adv_tile.controls.append(controlnet2_enable_chk)
+        adv_tile.controls.append(controlnet2_row)
+
+
+        def on_click_convert(v):
+            debug = v.control.data
+            input_path = Path(conv_input_text.value)
+            if input_path.is_file():
+
+                tag_src_img_list = get_image_file_list(str(input_path.parent))
+                tag_src_img_list = [ (input_path.parent/Path(t)).as_posix() for t in tag_src_img_list]
+
+                opt = {
+                    "type" : txt2img_or_img2img_radio.value,
+                    "denoising_strength" : float(denoising_str_txt.value),
+                    "output_scale" : float(output_scale_txt.value),
+                    "controlnet" : [
+                        {
+                            "enable" : controlnet1_enable_chk.value,
+                            "type" : controlnet1_type_dd.value,
+                            "weight" : float(controlnet1_weight_txt.value),
+                            "guidance_start" : float(controlnet1_g_start_txt.value),
+                            "guidance_end" : float(controlnet1_g_end_txt.value),
+                        },
+                        {
+                            "enable" : controlnet2_enable_chk.value,
+                            "type" : controlnet2_type_dd.value,
+                            "weight" : float(controlnet2_weight_txt.value),
+                            "guidance_start" : float(controlnet2_g_start_txt.value),
+                            "guidance_end" : float(controlnet2_g_end_txt.value),
+                        }
+                    ]
+                }
+                json_text = create_seq_json_from_tags( read_text_as_list( str(input_path) ), tag_src_img_list, opt, debug)
+                out_path = input_path.parent / Path( get_time_str() + "_from_tags" +".json" )
+                out_path.write_text( json_text , encoding="utf-8")
+                conv_output_json.value = str(out_path)
+                page.update()
+
+        convert_col.controls.append(ft.FilledButton(text = "Convert", width=200, on_click=on_click_convert, data=False))
+        convert_col.controls.append(ft.FilledButton(text = "Convert(Debug)", width=200, on_click=on_click_convert, data=True))
+
+
+        convert_col.controls.append(ft.Text("[Out] : Sequence Json File"))
+        convert_col.controls.append(conv_output_json)
+
+        return cont3
+
+
+    view = ft.View("/view_create_seq_from_imgs", [
+        ft.AppBar(
+            leading=ft.IconButton(icon=ft.Icons.ARROW_BACK, width=200, on_click=lambda _: page.go("/view_top")),
+            title=ft.Text("Create Sequence File From Images"),
+            bgcolor=ft.Colors.BLUE)
+    ])
+
+    cont1 = create_tagging_contents()
+    cont2 = create_filter_contents()
+    cont3 = create_convert_contents()
+
+    ################
+    col = ft.Column(
+        controls=[cont1, ft.Divider(), cont2, ft.Divider(), cont3],
+        scroll=ft.ScrollMode.ALWAYS,
+        expand=True,
+        tight=True
+    )
+    
+    view.controls.append(col)
+
+    
+    return view
+
+
+
+
 _edit_view_cache = None
 
 def main(page: ft.Page):
@@ -3084,6 +3634,7 @@ def main(page: ft.Page):
     def create_top_view(page: ft.Page):
         return ft.View("/view_top", [
             ft.FilledButton(text = "Generate", width=300, on_click=lambda _: page.go("/view_generate")),
+            ft.FilledButton(text = "Create Sequence File From Images", width=300, on_click=lambda _: page.go("/view_create_seq_from_imgs")),
             ft.OutlinedButton(text = "Lora Directory Setting", width=300, on_click=lambda _: page.go("/view_lora")),
             ft.OutlinedButton(text = "Preset Tags Setting", width=300, on_click=lambda _: page.go("/view_preset_tags")),
             ft.OutlinedButton(text = "Controlnet Alias Setting", width=300, on_click=lambda _: page.go("/view_controlnet")),
@@ -3097,6 +3648,7 @@ def main(page: ft.Page):
         #   -> /view_generate
         #       -> /view_generate_edit
         #           -> / view_generate_progress
+        #   -> /view_create_seq_from_imgs
         #   -> /view_lora
         #   -> /view_preset_tags
         #   -> /view_controlnet
@@ -3117,6 +3669,8 @@ def main(page: ft.Page):
             if _edit_view_cache == None:
                 _edit_view_cache = GenerateEditViewCreator(page).create()
             page.views.append(_edit_view_cache)
+        elif troute.match("/view_create_seq_from_imgs"):
+            page.views.append(create_create_seq_view(page))
         elif troute.match("/view_lora"):
             page.views.append(LoraEnvViewCreator(page).create())
         elif troute.match("/view_preset_tags"):

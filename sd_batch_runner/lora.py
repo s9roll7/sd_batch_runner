@@ -60,7 +60,7 @@ class Lora():
     
     def _select(self, key):
 
-        logger.debug(f"select {key=}")
+        logger.info(f"lora select {key=}")
 
         cur_item = self.data.get(key, {})
 
@@ -541,7 +541,7 @@ def get_lora_files_and_thumbs(lora_type:LoraType, thumb_size):
             if thumb_path.is_file():
                 thumb = get_thumb(thumb_path, thumb_size)
             
-            result.append((p.stem, thumb))
+            result.append((p.stem, p.stat().st_ctime, thumb))
 
     return result
 

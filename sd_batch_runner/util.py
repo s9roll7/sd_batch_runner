@@ -638,3 +638,10 @@ def config_restore_files_if_needed():
         if Path(c).is_file() == False:
             shutil.copy( Path(f"default_config/default_{c}"), c)
 
+
+####################################################################
+def get_image_file_list(img_dir):
+    img_list = [p for p in Path(img_dir).glob("*") if re.search(r'.*\.(jpg|png|webp)', str(p))]
+    return sorted(img_list)
+
+

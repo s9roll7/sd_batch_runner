@@ -4,4 +4,8 @@ fire
 opencv-python
 webuiapi==0.9.15
 av
-flet==0.24.1
+flet==0.25.1
+pandas
+huggingface_hub
+tqdm
+timm

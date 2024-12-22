@@ -84,10 +84,12 @@ class RandomPicker():
             elif rule[0] == "@random_per_seq":
                 if index == 0:
                     return self._select_one( rule[1] )
+                else:
+                    return v
             elif rule[0] == "@random":
                 return self._select_one( rule[1] )
             
-            return v
+            return self._select( rule[0], rule[1] )
         
         self.common_value = update( self.common_rule, index, self.common_value)
 
@@ -244,7 +246,7 @@ class PresetTags():
 
     def apply(self,index, prompt, neg_prompt):
         seq = self.seq_rule[index]
-        cur = seq if seq!=None else self.common_rule
+        cur = seq if seq else self.common_rule
 
         if cur:
             for tag in cur:
@@ -542,13 +544,16 @@ def create_lora_syntax(lora_type:LoraType, lora_index, stem, weight):
         sss_type = config_get_lbw_start_stop_step_item(lora_index)
         sss_val = config_get_lbw_start_stop_step_value_item(lora_index)
 
-    if enable_lbw:
-        if sss_type in ("start","stop","step"):
-            return f"<lora:{stem}:{weight:.2f}:{weight:.2f}:lbw={preset}:{sss_type}={sss_val}>"
+    if weight != 0:
+        if enable_lbw:
+            if sss_type in ("start","stop","step"):
+                return f"<lora:{stem}:{weight:.2f}:{weight:.2f}:lbw={preset}:{sss_type}={sss_val}>"
+            else:
+                return f"<lora:{stem}:{weight:.2f}:{weight:.2f}:lbw={preset}>"
         else:
-            return f"<lora:{stem}:{weight:.2f}:{weight:.2f}:lbw={preset}>"
+            return f"<lora:{stem}:{weight:.2f}>"
     else:
-        return f"<lora:{stem}:{weight:.2f}>"
+        return ""
 
 
 class GenerationSeqSetting():
@@ -688,8 +693,10 @@ class GenerationSeqSetting():
         seq_ad_setting = self.seq[index].get("adetailer",[])
         if seq_ad_setting:
             ad_setting = seq_ad_setting
+        
+        output_filename = self.seq[index].get("output_filename",None)
 
-        return (gen_type, gen_setting, cn_setting, ad_setting)
+        return (gen_type, gen_setting, cn_setting, ad_setting, output_filename)
     
     def get_image_from_image_rule(self, index, image_rule):
 
@@ -959,7 +966,7 @@ class SDGen:
             ad_units = self.create_adetailer_units(index, ad_setting)
 
             alwayson_scripts = {
-                "Simple wildcards": []
+                #"Simple wildcards": []
             }
 
             if gen_type == GenerationType.Txt2Img:
@@ -984,13 +991,21 @@ class SDGen:
 
             for f,s in enumerate(self.gen_seq):
                 result = self._run(f, s[0], s[1], s[2], s[3])
-                if isinstance(result, Path):
+
+                output_filename = s[4]
+                if output_filename:
+                    output_path = self.output_dir_path / Path(str(i).zfill(5))
+                    output_path.mkdir(parents=True, exist_ok=True)
+                    output_path = output_path/Path( output_filename )
+                else:
                     output_path = self.output_dir_path / Path( f"{str(i).zfill(5)}_{str(f).zfill(5)}.png")
+
+                if isinstance(result, Path):
                     shutil.copy(result, output_path)
                 else:
                     pnginfo = PngImagePlugin.PngInfo()
                     pnginfo.add_text("parameters", result.info['infotexts'][0])
-                    result.image.save( self.output_dir_path / Path( f"{str(i).zfill(5)}_{str(f).zfill(5)}.png" ) , pnginfo=pnginfo)
+                    result.image.save( output_path, pnginfo=pnginfo)
 
     def generate_generator( self, n = 1):
 
@@ -1004,13 +1019,21 @@ class SDGen:
 
             for f,s in enumerate(self.gen_seq):
                 result = self._run(f, s[0], s[1], s[2], s[3])
-                if isinstance(result, Path):
+
+                output_filename = s[4]
+                if output_filename:
+                    output_path = self.output_dir_path / Path(str(i).zfill(5))
+                    output_path.mkdir(parents=True, exist_ok=True)
+                    output_path = output_path/Path( output_filename )
+                else:
                     output_path = self.output_dir_path / Path( f"{str(i).zfill(5)}_{str(f).zfill(5)}.png")
+
+                if isinstance(result, Path):
                     shutil.copy(result, output_path)
                 else:
                     pnginfo = PngImagePlugin.PngInfo()
                     pnginfo.add_text("parameters", result.info['infotexts'][0])
-                    result.image.save( self.output_dir_path / Path( f"{str(i).zfill(5)}_{str(f).zfill(5)}.png" ) , pnginfo=pnginfo)
+                    result.image.save( output_path, pnginfo=pnginfo)
                 
                 yield
 
