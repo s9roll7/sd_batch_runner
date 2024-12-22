@@ -21,6 +21,8 @@ git clone https://github.com/s9roll7/sd_batch_runner.git
 cd sd_batch_runner
 py -3.10 -m venv venv
 venv\Scripts\activate.bat
+# Please install torch according to your environment.(https://pytorch.org/get-started/locally/)
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 ```
 
@@ -60,6 +62,10 @@ BG:1,1,1,1,0,1,0,0,0,1,1,1
 Soft:1,0,0,0,0,0,1,1,1,1,1,1
 ```
 
+  
+The following extensions are low priority.  
+  
+
 - sd-webui-segment-anything(https://github.com/continue-revolution/sd-webui-segment-anything)  
 You need to download one of the sam models and one of the DINO models.  
 Please note that this extension has its own installation procedure. You need to set the option to use local GroundingDINO in the options settings.
@@ -74,8 +80,6 @@ This change should solve all problems about ninja, pycocotools, _C and any other
 Please note that you need to install the branch that contains the api support(api-implementation branch), not the original created by AUTOMATIC1111.  
 https://github.com/mix1009/sdwebuiapi?tab=readme-ov-file#prompt-generator-api-by-david-martin-rius  
 
-- stable-diffusion-webui-wildcards(https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards)  
-Download the [wildcard](https://civitai.com/tag/wildcard) file you want to use.
 
 ### Organizing Lora Files
 This application assumes that lora files are organized in subfolders by type.  
@@ -120,13 +124,28 @@ Go [bottom left of app screen -> Generate]
 <img src="img/generate.png" width="512">
 
 
-
 - CUI  
 run launch_cmd.bat  
 
 ```sh
 python main.py
 ```
+
+### Works with [Speech Bubble Remove and Copy Tool](https://github.com/s9roll7/speech_bubble_remove_and_copy)
+Generate clean images with the tool.  
+Create a directory containing only the images you want to use.  
+Generate tags from images.  
+Remove unwanted tags.  
+Select txt2img or img2img.  
+(Optional) Set controlnet parameters.  
+Press Convert.  
+Load the generated json file.  
+Configure lora and prompt settings and run generation.  
+Copy the generated image to "YOUR_PROJECT_DIR/base"  
+<img src="img/tagging.png" width="512">
+
+
+
 
 ## Initial Settings
 There are a few items to be set up at first startup.  
@@ -157,11 +176,13 @@ Set dino model.
 See sdwebui txt2img -> Generation -> Segment Anything -> Enable GroundingDINO -> GroundingDINO Model )  
 
 
+## Changelog
+### 2024-12-22
+Added automatic generation of sequence file from image directories.  
+Fixed a bug that dynamic prompt could not be used together.  
+UI Improvements.  
+Some bug fix  
 
-
-
-## TODO
-Create some sample sequence json files  
 
 ### Related resources
 - [Stable Diffusion Web UI(A1111)](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
@@ -173,6 +194,5 @@ Create some sample sequence json files
 - [sd-webui-segment-anything](https://github.com/continue-revolution/sd-webui-segment-anything)
 - [stable-diffusion-webui-promptgen](https://github.com/AUTOMATIC1111/stable-diffusion-webui-promptgen)
 - [stable-diffusion-webui-promptgen](https://github.com/davidmartinrius/stable-diffusion-webui-promptgen/tree/api-implementation)
-- [stable-diffusion-webui-wildcards](https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards)
-
+- [wd-eva02-large-tagger-v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3)
 
